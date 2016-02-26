@@ -1,5 +1,12 @@
 using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Data.Common;
+using System.Data.SqlClient;
+using System.IO;
 using System.Linq;
+using System.Security.AccessControl;
+using System.Web;
 using Nop.Core;
 using Nop.Core.Data;
 using Nop.Core.Domain.Common;
@@ -33,6 +40,18 @@ namespace Nop.Services.Common
             this._dataProvider = dataProvider;
             this._dbContext = dbContext;
             this._commonSettings = commonSettings;
+        }
+
+        #endregion
+
+        #region Utilities
+
+        private string GetBackupsPath
+        {
+            get
+            {
+                return string.Format("{0}Administration\\backups\\", HttpContext.Current.Request.PhysicalApplicationPath);
+            }
         }
 
         #endregion
@@ -80,6 +99,105 @@ namespace Nop.Services.Common
             {
                 throw new Exception("Stored procedures are not supported by your database");
             }
+        }
+
+        /// <summary>
+        /// Gets all backup files
+        /// </summary>
+        /// <returns>Backup file collection</returns>
+        public virtual IList<FileInfo> GetAllBackupFiles
+        {
+            get
+            {
+                var path = GetBackupsPath;
+
+                if (!System.IO.Directory.Exists(path))
+                {
+                   System.IO.Directory.CreateDirectory(path);
+                }
+
+                var di = new DirectoryInfo(path);
+                var securityRules = di.GetAccessControl();
+                securityRules.AddAccessRule(new FileSystemAccessRule("Users",
+                    FileSystemRights.FullControl,
+                    InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+                    PropagationFlags.InheritOnly,
+                    AccessControlType.Allow));
+                di.SetAccessControl(securityRules);
+
+                return System.IO.Directory.GetFiles(path, "*.bak").Select(fullPath => new FileInfo(fullPath)).OrderByDescending(p=>p.CreationTime).ToList();
+            }
+        }
+
+        /// <summary>
+        /// Creates a backup of the database
+        /// </summary>
+        public virtual void BackupDatabase()
+        {
+            var fileName = string.Format(
+                "{0}database_{1}_{2}.bak",
+                GetBackupsPath,
+                DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss"),
+                CommonHelper.GenerateRandomDigitCode(4));
+
+            var commandText = string.Format(
+                "BACKUP DATABASE [{0}] TO DISK = '{1}' WITH FORMAT, COMPRESSION",
+                _dbContext.DbName(),
+                fileName);
+
+
+            _dbContext.ExecuteSqlCommand(commandText, true);
+        }
+
+        /// <summary>
+        /// Restores the database from a backup
+        /// </summary>
+        /// <param name="backupFileName">The name of the backup file</param>
+        public virtual void RestoreDatabase(string backupFileName)
+        {
+            var settings = new DataSettingsManager();
+            var conn = new SqlConnectionStringBuilder(settings.LoadSettings().DataConnectionString)
+            {
+                InitialCatalog = "master"
+            };
+
+            using (var sqlConnectiononn = new SqlConnection(conn.ToString()))
+            {
+                var commandText = string.Format(
+                    "DECLARE @ErrorMessage NVARCHAR(4000)\n" +
+                    "ALTER DATABASE [{0}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE\n" +
+                    "BEGIN TRY\n" +
+                        "RESTORE DATABASE [{0}] FROM DISK = '{1}' WITH REPLACE\n" +
+                    "END TRY\n" +
+                    "BEGIN CATCH\n" +
+                        "SET @ErrorMessage = ERROR_MESSAGE()\n" +
+                    "END CATCH\n" +
+                    "ALTER DATABASE [{0}] SET MULTI_USER WITH ROLLBACK IMMEDIATE\n" +
+                    "IF (@ErrorMessage is not NULL)\n" +
+                    "BEGIN\n" +
+                        "RAISERROR (@ErrorMessage, 16, 1)\n" +
+                    "END",
+                    _dbContext.DbName(),
+                    backupFileName);
+
+                DbCommand dbCommand = new SqlCommand(commandText, sqlConnectiononn);
+                if (sqlConnectiononn.State != ConnectionState.Open)
+                    sqlConnectiononn.Open();
+                dbCommand.ExecuteNonQuery();
+            }
+
+            //clear all pools
+            SqlConnection.ClearAllPools();
+        }
+
+        /// <summary>
+        /// Returns the path to the backup file
+        /// </summary>
+        /// <param name="backupFileName">The name of the backup file</param>
+        /// <returns>The path to the backup file</returns>
+        public virtual string GetBackupPath(string backupFileName)
+        {
+            return Path.Combine(GetBackupsPath, backupFileName);
         }
 
         #endregion

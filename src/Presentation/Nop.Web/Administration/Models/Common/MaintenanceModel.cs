@@ -1,5 +1,7 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using System.IO;
 using Nop.Web.Framework;
 using Nop.Web.Framework.Mvc;
 
@@ -17,6 +19,8 @@ namespace Nop.Admin.Models.Common
         public DeleteGuestsModel DeleteGuests { get; set; }
         public DeleteAbandonedCartsModel DeleteAbandonedCarts { get; set; }
         public DeleteExportedFilesModel DeleteExportedFiles { get; set; }
+
+        public List<FileInfo> BackupFiles { get; set; }
 
         #region Nested classes
 
